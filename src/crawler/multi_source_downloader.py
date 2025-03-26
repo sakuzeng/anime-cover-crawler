@@ -8,22 +8,40 @@ from datetime import datetime
 import json
 import time
 from enum import Enum
+from bs4 import BeautifulSoup
 
 class AnimeSource(Enum):
     BILIBILI = "bilibili"
     ANILIST = "anilist"
     MAL = "myanimelist"
+    BANGUMI = "bangumi"
+    ANIDB = "anidb"
+    # FANBOX = "fanbox"    # 添加 Fanbox 源
 
+    
 class AnimeDownloader:
     def __init__(self):
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         self.sources = {
             AnimeSource.BILIBILI: self._get_bili_cover,
             AnimeSource.ANILIST: self._get_anilist_cover,
+            AnimeSource.BANGUMI: self._get_bangumi_cover,
+            AnimeSource.MAL: self._get_mal_cover,
+            AnimeSource.ANIDB: self._get_anidb_cover
+            # AnimeSource.FANBOX: self._get_fanbox_cover,
         }
-    
+        self.delays = {
+            AnimeSource.BILIBILI: 2,
+            AnimeSource.ANILIST: 1,
+            AnimeSource.BANGUMI: 1,
+            AnimeSource.MAL: 3,
+            AnimeSource.ANIDB: 2
+            # AnimeSource.FANBOX: 2,
+        }
+        self.session = requests.Session()  # 添加session复用
+
     def _get_bili_cover(self, anime_name: str) -> Optional[dict]:
         """从Bilibili获取封面"""
         url = 'https://api.bilibili.com/x/web-interface/search/type'
@@ -93,9 +111,77 @@ class AnimeDownloader:
             print(f"AniList获取失败: {str(e)}")
         return None
 
+    def _get_bangumi_cover(self, anime_name: str) -> Optional[dict]:
+        """从 Bangumi 获取封面"""
+        try:
+            url = f'https://api.bgm.tv/search/subject/{anime_name}'
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data and data['list']:
+                anime = data['list'][0]
+                return {
+                    'url': anime['images']['large'],
+                    'title': anime['name'],
+                    'source': AnimeSource.BANGUMI.value
+                }
+        except Exception as e:
+            print(f"Bangumi获取失败: {str(e)}")
+        return None
+
+    def _get_mal_cover(self, anime_name: str) -> Optional[dict]:
+        """从MyAnimeList获取封面"""
+        try:
+            search_url = f"https://myanimelist.net/anime.php?q={anime_name}"
+            response = requests.get(search_url, headers=self.headers)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            anime_link = soup.select_one('a.hoverinfo_trigger')
+            if anime_link:
+                detail_url = anime_link['href']
+                detail_response = requests.get(detail_url, headers=self.headers)
+                detail_soup = BeautifulSoup(detail_response.text, 'html.parser')
+                
+                img = detail_soup.select_one('img[itemprop="image"]')
+                if img:
+                    return {
+                        'url': img['src'],
+                        'title': anime_link.text.strip(),
+                        'source': AnimeSource.MAL.value
+                    }
+        except Exception as e:
+            print(f"MAL获取失败: {str(e)}")
+        return None
+
+    def _get_anidb_cover(self, anime_name: str) -> Optional[dict]:
+        """从AniDB获取封面"""
+        try:
+            search_url = f"https://anidb.net/anime/?adb.search={anime_name}&do.search=1"
+            response = requests.get(search_url, headers=self.headers)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            anime_item = soup.select_one('.thumb_anime')
+            if anime_item:
+                img = anime_item.select_one('img')
+                title = anime_item.select_one('.anime_title')
+                if img and title:
+                    return {
+                        'url': 'https://cdn.anidb.net' + img['src'],
+                        'title': title.text.strip(),
+                        'source': AnimeSource.ANIDB.value
+                    }
+        except Exception as e:
+            print(f"AniDB获取失败: {str(e)}")
+        return None
+
     def download_image(self, url: str, anime_name: str, source: str) -> Optional[str]:
         """下载图片"""
         try:
+            # 下载前添加延迟
+            time.sleep(1)
             response = requests.get(url, headers=self.headers, stream=True)
             response.raise_for_status()
             
@@ -121,9 +207,16 @@ class AnimeDownloader:
         for source in sources:
             if source in self.sources:
                 print(f"从 {source.value} 获取封面...")
+                # 添加延迟
+                delay = self.delays.get(source, 1)
+                time.sleep(delay)
                 result = self.sources[source](anime_name)
                 if result:
                     results.append(result)
+                
+                # 源之间添加额外延迟
+                if len(results) > 0:
+                    time.sleep(1)
         return results
 
 def main():
