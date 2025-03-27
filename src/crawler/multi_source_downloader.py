@@ -9,6 +9,9 @@ import json
 import time
 from enum import Enum
 from bs4 import BeautifulSoup
+from PIL import Image
+import io
+from tqdm import tqdm
 
 class AnimeSource(Enum):
     BILIBILI = "bilibili"
@@ -74,10 +77,16 @@ class AnimeDownloader:
             
             if data['code'] == 0 and data['data'].get('result'):
                 anime = data['data']['result'][0]
+                img_url = anime['cover'].replace('http:', 'https:')
+                size, file_size = self._get_image_info(img_url)
+                
                 return {
-                    'url': anime['cover'].replace('http:', 'https:'),
+                    'url': img_url,
                     'title': anime['title'],
-                    'source': AnimeSource.BILIBILI.value
+                    'source': AnimeSource.BILIBILI.value,
+                    'resolution': size,
+                    'file_size': file_size,
+                    'quality_score': size[0] * size[1] * file_size
                 }
         except Exception as e:
             print(f"Bilibili获取失败: {str(e)}")
@@ -102,11 +111,18 @@ class AnimeDownloader:
             response.raise_for_status()
             data = response.json()
             media = data['data']['Media']
-            return {
-                'url': media['coverImage'].get('extraLarge') or media['coverImage'].get('large'),
-                'title': media['title'].get('native') or media['title'].get('romaji'),
-                'source': AnimeSource.ANILIST.value
-            }
+            if media:
+                img_url = media['coverImage'].get('extraLarge') or media['coverImage'].get('large')
+                size, file_size = self._get_image_info(img_url)
+                
+                return {
+                    'url': img_url,
+                    'title': media['title'].get('native') or media['title'].get('romaji'),
+                    'source': AnimeSource.ANILIST.value,
+                    'resolution': size,
+                    'file_size': file_size,
+                    'quality_score': size[0] * size[1] * file_size
+                }
         except Exception as e:
             print(f"AniList获取失败: {str(e)}")
         return None
@@ -121,10 +137,16 @@ class AnimeDownloader:
             
             if data and data['list']:
                 anime = data['list'][0]
+                img_url = anime['images']['large']
+                size, file_size = self._get_image_info(img_url)
+                
                 return {
-                    'url': anime['images']['large'],
+                    'url': img_url,
                     'title': anime['name'],
-                    'source': AnimeSource.BANGUMI.value
+                    'source': AnimeSource.BANGUMI.value,
+                    'resolution': size,
+                    'file_size': file_size,
+                    'quality_score': size[0] * size[1] * file_size
                 }
         except Exception as e:
             print(f"Bangumi获取失败: {str(e)}")
@@ -146,10 +168,16 @@ class AnimeDownloader:
                 
                 img = detail_soup.select_one('img[itemprop="image"]')
                 if img:
+                    img_url = img['src']
+                    size, file_size = self._get_image_info(img_url)
+                    
                     return {
-                        'url': img['src'],
+                        'url': img_url,
                         'title': anime_link.text.strip(),
-                        'source': AnimeSource.MAL.value
+                        'source': AnimeSource.MAL.value,
+                        'resolution': size,
+                        'file_size': file_size,
+                        'quality_score': size[0] * size[1] * file_size
                     }
         except Exception as e:
             print(f"MAL获取失败: {str(e)}")
@@ -168,31 +196,57 @@ class AnimeDownloader:
                 img = anime_item.select_one('img')
                 title = anime_item.select_one('.anime_title')
                 if img and title:
+                    img_url = 'https://cdn.anidb.net' + img['src']
+                    size, file_size = self._get_image_info(img_url)
+                    
                     return {
-                        'url': 'https://cdn.anidb.net' + img['src'],
+                        'url': img_url,
                         'title': title.text.strip(),
-                        'source': AnimeSource.ANIDB.value
+                        'source': AnimeSource.ANIDB.value,
+                        'resolution': size,
+                        'file_size': file_size,
+                        'quality_score': size[0] * size[1] * file_size
                     }
         except Exception as e:
             print(f"AniDB获取失败: {str(e)}")
         return None
 
-    def download_image(self, url: str, anime_name: str, source: str) -> Optional[str]:
-        """下载图片"""
+    def _get_image_info(self, url: str) -> tuple:
+        """获取图片信息（尺寸和文件大小）"""
         try:
-            # 下载前添加延迟
+            response = self.session.get(url, stream=True)
+            response.raise_for_status()
+            img = Image.open(io.BytesIO(response.content))
+            size = img.size
+            file_size = len(response.content) / (1024 * 1024)  # MB
+            return size, file_size
+        except Exception as e:
+            print(f"获取图片信息失败: {str(e)}")
+            return (0, 0), 0
+
+    def download_image(self, url: str, anime_name: str, source: str) -> Optional[str]:
+        """下载图片并显示进度"""
+        try:
             time.sleep(1)
-            response = requests.get(url, headers=self.headers, stream=True)
+            response = self.session.get(url, stream=True)
             response.raise_for_status()
             
+            total_size = int(response.headers.get('content-length', 0))
             os.makedirs('covers', exist_ok=True)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f'covers/{anime_name}_{source}_{timestamp}.jpg'
             
             with open(filename, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+                with tqdm(
+                    total=total_size,
+                    unit='B',
+                    unit_scale=True,
+                    desc=f"下载 {source} 封面"
+                ) as pbar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
             return filename
         except Exception as e:
             print(f"下载失败: {str(e)}")

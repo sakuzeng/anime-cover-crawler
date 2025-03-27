@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import sys
-import os  # 添加缺失的导入
+import os
 from crawler.multi_source_downloader import AnimeDownloader, AnimeSource
 
 def main():
@@ -25,9 +25,32 @@ def main():
         print("未找到任何封面")
         return
 
-    # 显示下载结果
+    # 按质量评分排序
+    sorted_results = sorted(results, key=lambda x: x.get('quality_score', 0), reverse=True)
+    
+    # 显示所有找到的封面信息
     print(f"\n找到 {len(results)} 个封面:")
-    for result in results:
+    print("\n按质量排序的结果:")
+    for idx, result in enumerate(sorted_results, 1):
+        resolution = result.get('resolution', (0, 0))
+        file_size = result.get('file_size', 0)
+        print(f"\n{idx}. 来源: {result['source']}")
+        print(f"   标题: {result['title']}")
+        print(f"   分辨率: {resolution[0]}x{resolution[1]}")
+        print(f"   文件大小: {file_size:.2f}MB")
+        print(f"   质量评分: {result.get('quality_score', 0):.0f}")
+
+    # 询问用户是否只下载最高质量的图片
+    download_all = input("\n是否下载所有封面? (y/n, 默认只下载最高质量): ").lower() == 'y'
+    
+    if download_all:
+        download_list = sorted_results
+    else:
+        download_list = [sorted_results[0]]
+        print("\n将只下载最高质量的封面...")
+
+    # 下载选定的封面
+    for result in download_list:
         print(f"\n从 {result['source']} 下载中...")
         saved_path = downloader.download_image(
             result['url'],
@@ -35,10 +58,14 @@ def main():
             result['source']
         )
         if saved_path:
-            size_mb = os.path.getsize(saved_path) / (1024 * 1024)
+            print(f"\n下载完成:")
             print(f"标题: {result['title']}")
-            print(f"保存到: {saved_path}")
+            print(f"来源: {result['source']}")
+            resolution = result.get('resolution', (0, 0))
+            print(f"分辨率: {resolution[0]}x{resolution[1]}")
+            size_mb = os.path.getsize(saved_path) / (1024 * 1024)
             print(f"文件大小: {size_mb:.2f}MB")
+            print(f"保存到: {saved_path}")
 
 if __name__ == "__main__":
     main()
