@@ -12,6 +12,12 @@ from bs4 import BeautifulSoup
 from PIL import Image
 import io
 from tqdm import tqdm
+# 添加4kvm依赖库
+from urllib.parse import quote
+import re
+import random
+# 相似度
+from fuzzywuzzy import fuzz
 
 class AnimeSource(Enum):
     BILIBILI = "bilibili"
@@ -19,32 +25,52 @@ class AnimeSource(Enum):
     MAL = "myanimelist"
     BANGUMI = "bangumi"
     ANIDB = "anidb"
-    # FANBOX = "fanbox"    # 添加 Fanbox 源
+    FOURKVM = "4kvm"# 新增 4kvm 数据源
+    IYF = "iyf"  # 新增 iyf 数据源
 
     
 class AnimeDownloader:
     def __init__(self):
+        # 初始化http对话
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         self.sources = {
-            AnimeSource.BILIBILI: self._get_bili_cover,
-            AnimeSource.ANILIST: self._get_anilist_cover,
-            AnimeSource.BANGUMI: self._get_bangumi_cover,
-            AnimeSource.MAL: self._get_mal_cover,
-            AnimeSource.ANIDB: self._get_anidb_cover
-            # AnimeSource.FANBOX: self._get_fanbox_cover,
+            # AnimeSource.BILIBILI: self._get_bili_cover,
+            # AnimeSource.ANILIST: self._get_anilist_cover,
+            # AnimeSource.BANGUMI: self._get_bangumi_cover,
+            # AnimeSource.MAL: self._get_mal_cover,
+            # AnimeSource.ANIDB: self._get_anidb_cover,
+            # AnimeSource.FOURKVM: self._get_4kvm_cover,
+            AnimeSource.IYF: self._get_iyf_cover
         }
+        # 定义延迟
         self.delays = {
             AnimeSource.BILIBILI: 2,
             AnimeSource.ANILIST: 1,
             AnimeSource.BANGUMI: 1,
             AnimeSource.MAL: 3,
-            AnimeSource.ANIDB: 2
-            # AnimeSource.FANBOX: 2,
+            AnimeSource.ANIDB: 2,
+            AnimeSource.FOURKVM: 2,
+            AnimeSource.IYF: 2
         }
-        self.session = requests.Session()  # 添加session复用
-
+        # 添加session复用
+        self.session = requests.Session()  
+        # 确保 temp_result 目录存在，用于保存 HTML
+        self.output_dir = "temp_html"
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+        # 相似度阈值，用于选择最相似标题
+        self.similarity_threshold = 70
+    def _get_random_user_agent(self) -> str:
+        """返回随机用户代理，模拟不同浏览器，应对用户代理检测"""
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15'
+        ]
+        return random.choice(user_agents)
     def _get_bili_cover(self, anime_name: str) -> Optional[dict]:
         """从Bilibili获取封面"""
         url = 'https://api.bilibili.com/x/web-interface/search/type'
@@ -93,38 +119,33 @@ class AnimeDownloader:
         return None
 
     def _get_anilist_cover(self, anime_name: str) -> Optional[dict]:
-        """从AniList获取封面"""
-        query = '''
-        query ($search: String) {
-            Media (search: $search, type: ANIME) {
-                coverImage { extraLarge large }
-                title { native romaji }
-            }
-        }
-        '''
+        """从 AniList 搜索页面获取封面"""
         try:
-            response = requests.post(
-                'https://graphql.anilist.co',
-                json={'query': query, 'variables': {'search': anime_name}},
-                headers=self.headers
-            )
+            # 构造搜索 URL
+            search_url = f"https://anilist.co/search/anime?search={anime_name}"
+            response = self.session.get(search_url, headers=self.headers)
             response.raise_for_status()
-            data = response.json()
-            media = data['data']['Media']
-            if media:
-                img_url = media['coverImage'].get('extraLarge') or media['coverImage'].get('large')
-                size, file_size = self._get_image_info(img_url)
-                
-                return {
-                    'url': img_url,
-                    'title': media['title'].get('native') or media['title'].get('romaji'),
-                    'source': AnimeSource.ANILIST.value,
-                    'resolution': size,
-                    'file_size': file_size,
-                    'quality_score': size[0] * size[1] * file_size
-                }
+            
+            # 使用 BeautifulSoup 解析 HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            anime_item = soup.select_one('.media-card')  # 根据实际 HTML 结构调整选择器
+            if anime_item:
+                img = anime_item.select_one('img')
+                title = anime_item.select_one('.title')
+                if img and title:
+                    img_url = img['src']
+                    size, file_size = self._get_image_info(img_url)
+                    
+                    return {
+                        'url': img_url,
+                        'title': title.text.strip(),
+                        'source': AnimeSource.ANILIST.value,
+                        'resolution': size,
+                        'file_size': file_size,
+                        'quality_score': size[0] * size[1] * file_size
+                    }
         except Exception as e:
-            print(f"AniList获取失败: {str(e)}")
+            print(f"AniList 获取失败: {str(e)}")
         return None
 
     def _get_bangumi_cover(self, anime_name: str) -> Optional[dict]:
@@ -209,6 +230,130 @@ class AnimeDownloader:
                     }
         except Exception as e:
             print(f"AniDB获取失败: {str(e)}")
+        return None
+
+    def _get_4kvm_cover(self, anime_name: str) -> Optional[Dict]:
+        """从 4kvm.net 获取动漫封面，支持完全匹配和最相似匹配"""
+        try:
+            # 随机延迟，防止频率限制
+            time.sleep(random.uniform(self.delays.get(AnimeSource.FOURKVM, 1), 3))
+            # 更新用户代理
+            self.headers['User-Agent'] = self._get_random_user_agent()
+            # 更新 Referer
+            self.headers['Referer'] = 'https://www.4kvm.net/'
+            # 访问主页获取 cookies
+            print("访问 4kvm 主页获取 cookies...")
+            homepage_response = self.session.get('https://www.4kvm.net', headers=self.headers, timeout=10)
+            homepage_response.raise_for_status()
+            print(f"主页响应状态码: {homepage_response.status_code}, Cookies: {list(self.session.cookies.keys())}")
+            # URL 编码动漫名称
+            encoded_name = quote(anime_name)
+            search_url = f"https://www.4kvm.net/xssearch?s={encoded_name}"
+            print(f"请求 4kvm 搜索: {search_url}")
+            # 发送搜索请求
+            response = self.session.get(search_url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            print(f"搜索响应状态码: {response.status_code}")
+            # 保存 HTML
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_anime_name = re.sub(r'[^\w\-]', '_', anime_name)
+            html_filename = os.path.join(self.output_dir, f"{safe_anime_name}_{timestamp}_4kvm.html")
+            with open(html_filename, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            print(f"HTML 保存至: {html_filename}")
+            # 解析 HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            title = soup.select_one('title').text if soup.select_one('title') else '无标题'
+            print(f"页面标题: {title}")
+            # 查找搜索结果条目
+            anime_items = soup.select('.result-item article')
+            print(f"找到 {len(anime_items)} 个 .result-item 条目")
+            
+            best_match = None
+            highest_similarity = 0
+            
+            for item in anime_items:
+                # 获取封面图片和标题
+                img = item.select_one('.thumbnail img')
+                title_elem = item.select_one('.details .title a')
+                if img and title_elem:
+                    img_url = img.get('data-src', img['src'])
+                    title = title_elem.text.strip().replace("'", "_")  # 替换单引号
+                    # 计算标题与输入的相似度
+                    similarity = fuzz.ratio(anime_name.lower(), title.lower())
+                    print(f"4kvm: 标题 '{title}', 相似度: {similarity}")
+                    
+                    # 完全匹配
+                    if re.search(re.escape(anime_name), title, re.IGNORECASE):
+                        size, file_size = self._get_image_info(img_url)
+                        result = {
+                            'url': img_url,
+                            'title': title,
+                            'source': AnimeSource.FOURKVM.value,
+                            'resolution': size,
+                            'file_size': file_size,
+                            'quality_score': size[0] * size[1] * file_size
+                        }
+                        print(f"4kvm: 抓取成功（完全匹配）: {result['url']}")
+                        return result
+                    # 记录最高相似度
+                    if similarity > highest_similarity:
+                        highest_similarity = similarity
+                        size, file_size = self._get_image_info(img_url)
+                        best_match = {
+                            'url': img_url,
+                            'title': title,
+                            'source': AnimeSource.FOURKVM.value,
+                            'resolution': size,
+                            'file_size': file_size,
+                            'quality_score': size[0] * size[1] * file_size
+                        }
+                else:
+                    print("4kvm: 条目缺少图片或标题")
+            
+            # 无完全匹配，返回最相似结果
+            if best_match and highest_similarity >= self.similarity_threshold:
+                print(f"4kvm: 无完全匹配，选择最相似标题 '{best_match['title']}'（相似度: {highest_similarity}）")
+                return best_match
+            print("4kvm: 未找到匹配的动漫条目")
+        
+        except requests.ConnectionError:
+            print("4kvm: 网络连接失败")
+        except requests.Timeout:
+            print("4kvm: 请求超时")
+        except requests.HTTPError as e:
+            print(f"4kvm: HTTP 错误: {e}")
+        except Exception as e:
+            print(f"4kvm 获取失败: {str(e)}")
+        return None
+    
+    def _get_iyf_cover(self, anime_name: str) -> Optional[dict]:
+        """从 IYF 获取封面"""
+        try:
+            search_url = f"https://www.iyf.tv/search/{anime_name}"
+            response = self.session.get(search_url, headers=self.headers)
+            response.raise_for_status()
+            
+            # 使用 BeautifulSoup 解析 HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            anime_item = soup.select_one('.anime-item')  # 根据实际 HTML 结构调整选择器
+            if anime_item:
+                img = anime_item.select_one('img')
+                title = anime_item.select_one('.anime-title')
+                if img and title:
+                    img_url = img['src']
+                    size, file_size = self._get_image_info(img_url)
+                    
+                    return {
+                        'url': img_url,
+                        'title': title.text.strip(),
+                        'source': AnimeSource.IYF.value,
+                        'resolution': size,
+                        'file_size': file_size,
+                        'quality_score': size[0] * size[1] * file_size
+                    }
+        except Exception as e:
+            print(f"IYF 获取失败: {str(e)}")
         return None
 
     def _get_image_info(self, url: str) -> tuple:

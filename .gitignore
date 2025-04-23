@@ -4,3 +4,7 @@ covers/*
 
 # ignore pychche
 **/__pycache__/
+
+# ignore test_html
+**/test_html/
+**/temp_html/
