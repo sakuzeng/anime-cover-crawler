@@ -18,6 +18,15 @@ import re
 import random
 # 相似度
 from fuzzywuzzy import fuzz
+# 添加ayf依赖库
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+# from dotenv import load_dotenv
+# # 加载 .env 文件
+# load_dotenv()
 
 class AnimeSource(Enum):
     BILIBILI = "bilibili"
@@ -327,35 +336,136 @@ class AnimeDownloader:
             print(f"4kvm 获取失败: {str(e)}")
         return None
     
-    def _get_iyf_cover(self, anime_name: str) -> Optional[dict]:
-        """从 IYF 获取封面"""
+    def _get_iyf_cover(self, anime_name: str) -> Optional[Dict]:
+        """从 iyf.tv 获取封面，使用 Selenium 处理动态加载，添加代理，支持完全匹配和最相似匹配"""
+        driver = None
         try:
-            search_url = f"https://www.iyf.tv/search/{anime_name}"
-            response = self.session.get(search_url, headers=self.headers)
-            response.raise_for_status()
-            
-            # 使用 BeautifulSoup 解析 HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
-            anime_item = soup.select_one('.anime-item')  # 根据实际 HTML 结构调整选择器
-            if anime_item:
-                img = anime_item.select_one('img')
-                title = anime_item.select_one('.anime-title')
-                if img and title:
-                    img_url = img['src']
-                    size, file_size = self._get_image_info(img_url)
-                    
-                    return {
-                        'url': img_url,
-                        'title': title.text.strip(),
-                        'source': AnimeSource.IYF.value,
-                        'resolution': size,
-                        'file_size': file_size,
-                        'quality_score': size[0] * size[1] * file_size
-                    }
-        except Exception as e:
-            print(f"IYF 获取失败: {str(e)}")
-        return None
+            # # 从 .env 文件获取代理
+            # proxy = os.getenv("PROXY")
+            # if not proxy:
+            #     raise ValueError("未在 .env 文件中配置 PROXY，请设置 PROXY=http://your_proxy_host:your_proxy_port")
+            # print(f"使用代理: {proxy}")
 
+            # 随机延迟，防止频率限制
+            time.sleep(random.uniform(self.delays.get(AnimeSource.IYF, 1), 3))
+            # 配置 Selenium，模拟真实浏览器
+
+            options = Options()
+            options.headless = True  # 无头模式
+            options.add_argument(f"user-agent={self._get_random_user_agent()}")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")  # 隐藏 Selenium 特征
+            # 添加代理
+            # options.add_argument(f"--proxy-server={proxy}")
+
+
+            # 重试机制，最多尝试 3 次
+            for attempt in range(3):
+                try:
+                    # 使用 ChromeDriverManager 自动管理 ChromeDriver
+                    service = Service(ChromeDriverManager().install())
+                    driver = webdriver.Chrome(service=service, options=options)
+                    # driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+                    # 访问主页获取 cookies
+                    print("访问 iyf.tv 主页获取 cookies...")
+                    driver.get('https://www.iyf.tv')
+                    time.sleep(5)  # 延长等待时间
+                    cookies = driver.get_cookies()
+                    print(f"主页 Cookies: {[cookie['name'] for cookie in cookies]}")
+                    # 搜索页面
+                    encoded_name = quote(anime_name)
+                    search_url = f"https://www.iyf.tv/search/{encoded_name}"
+                    print(f"使用 Selenium 请求 iyf.tv 搜索: {search_url}")
+                    driver.get(search_url)
+                    time.sleep(7)  # 延长等待动态加载
+                    # 模拟滚动以确保内容加载
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    # 解析页面
+                    soup = BeautifulSoup(driver.page_source, 'html.parser')
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise Exception(f"重试 3 次后仍失败: {str(e)}")
+                    print(f"请求失败，重试 {attempt + 1}/3: {str(e)}")
+                    if driver:
+                        driver.quit()
+                    time.sleep(random.uniform(2, 5))
+            # 保存 HTML
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_anime_name = re.sub(r'[^\w\-]', '_', anime_name)
+            html_filename = os.path.join(self.output_dir, f"{safe_anime_name}_{timestamp}_iyf.html")
+            with open(html_filename, 'w', encoding='utf-8') as f:
+                f.write(soup.prettify())
+            print(f"HTML 保存至: {html_filename}")
+            # 输出页面标题
+            title = soup.select_one('title').text if soup.select_one('title') else '无标题'
+            print(f"页面标题: {title}")
+            # 查找搜索结果条目（假设选择器）
+            anime_items = soup.select('.video-item, .item, .search-result-item, .search-item')
+            print(f"找到 {len(anime_items)} 个搜索条目")
+            
+            best_match = None
+            highest_similarity = 0
+            
+            for item in anime_items:
+                # 获取封面图片和标题
+                img = item.select_one('img')
+                title_elem = item.select_one('.title, h3, a')
+                if img and title_elem:
+                    img_url = img.get('data-src', img['src'])
+                    title = title_elem.text.strip().replace("'", "_")  # 替换单引号
+                    # 计算相似度
+                    similarity = fuzz.ratio(anime_name.lower(), title.lower())
+                    print(f"iyf: 标题 '{title}', 相似度: {similarity}")
+                    
+                    # 完全匹配或部分匹配 anime_name 的子字符串
+                    # 完全匹配：标题包含完整 anime_name
+                    # 部分匹配：标题包含 anime_name 的任意子字符串（至少 2 个字符）
+                    if (re.search(re.escape(anime_name), title, re.IGNORECASE) or
+                        any(re.search(re.escape(word), title, re.IGNORECASE) 
+                            for word in anime_name.split() if len(word) >= 2)):
+                        size, file_size = self._get_image_info(img_url)
+                        result = {
+                            'url': img_url,
+                            'title': title,
+                            'source': AnimeSource.IYF.value,
+                            'resolution': size,
+                            'file_size': file_size,
+                            'quality_score': size[0] * size[1] * file_size
+                        }
+                        print(f"iyf: 抓取成功（完全或部分匹配）: {result['url']}")
+                        return result
+                    # 记录最高相似度
+                    if similarity > highest_similarity:
+                        highest_similarity = similarity
+                        size, file_size = self._get_image_info(img_url)
+                        best_match = {
+                            'url': img_url,
+                            'title': title,
+                            'source': AnimeSource.IYF.value,
+                            'resolution': size,
+                            'file_size': file_size,
+                            'quality_score': size[0] * size[1] * file_size
+                        }
+                else:
+                    print("iyf: 条目缺少图片或标题")
+            
+            # 无完全匹配，返回最相似结果
+            if best_match and highest_similarity >= self.similarity_threshold:
+                print(f"iyf: 无完全匹配，选择最相似标题 '{best_match['title']}'（相似度: {highest_similarity}）")
+                return best_match
+            print("iyf: 未找到匹配的动漫条目")
+        
+        except Exception as e:
+            print(f"iyf 获取失败: {str(e)}")
+        finally:
+            if driver:
+                driver.quit()
+        return None
+    
     def _get_image_info(self, url: str) -> tuple:
         """获取图片信息（尺寸和文件大小）"""
         try:

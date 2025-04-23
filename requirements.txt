@@ -5,3 +5,7 @@ pytest
 Pillow 
 tqdm
 fuzzywuzzy
+python-Levenshtein
+webdriver-manager
+selenium
+# python-dotenv

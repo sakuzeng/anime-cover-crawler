@@ -8,3 +8,6 @@ covers/*
 # ignore test_html
 **/test_html/
 **/temp_html/
+
+# ignore .env
+.env
