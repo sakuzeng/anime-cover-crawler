@@ -1,3 +1,6 @@
 # ignore covers folder
 covers/*
 !covers/
+
+# ignore pychche
+**/__pycache__/
