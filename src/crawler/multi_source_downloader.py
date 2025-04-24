@@ -18,28 +18,24 @@ import re
 import random
 # 相似度
 from fuzzywuzzy import fuzz
-
 # 添加ayf依赖库
 # from selenium import webdriver
 # from selenium.webdriver.chrome.options import Options
 # from selenium.webdriver.chrome.service import Service
 # from webdriver_manager.chrome import ChromeDriverManager
-
 # 翻译依赖库
 # from deep_translator import GoogleTranslator
 # from googletrans import Translator
 # import pykakasi
 
 import logging
-
 # 导入.env
 from dotenv import load_dotenv
-
+# 导入工具函数
 from utils.helpers import clean_title, normalize_title
+
 # 加载 .env 文件
 load_dotenv()
-
-## 日志
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -57,18 +53,16 @@ class AnimeSource(Enum):
     
 class AnimeDownloader:
     def __init__(self):
-        # 初始化http对话
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        self.headers = {}
         self.sources = {
             # AnimeSource.FOURKVM: self._get_4kvm_cover,
             # AnimeSource.BILIBILI: self._get_bili_cover,
-            AnimeSource.BANGUMI: self._get_bangumi_cover_1,
+            # AnimeSource.BANGUMI: self._get_bangumi_cover,、
+            # AnimeSource.ANILIST: self._get_anilist_cover,
             # AnimeSource.MAL: self._get_mal_cover,
             # AnimeSource.ANIDB: self._get_anidb_cover,
             # AnimeSource.IYF: self._get_iyf_cover，
-            # AnimeSource.ANILIST: self._get_anilist_cover,
+
         }
         # 定义延迟
         self.delays = {
@@ -86,8 +80,10 @@ class AnimeDownloader:
         self.output_dir = "temp_html"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        # 相似度阈值，用于选择最相似标题
-        self.similarity_threshold = 70
+        # 相似度阈值，用于提供url
+        self.similarity_threshold = 90
+
+
         # 设置 Clash 代理
         # 从环境变量中读取代理配置
         # http_proxy = os.getenv("HTTP_PROXY")
@@ -102,7 +98,6 @@ class AnimeDownloader:
         # # 初始化翻译和罗马音转换工具
         # self.translator = GoogleTranslator(source='zh-CN', target='ja',proxies=self.proxies)
         # self.kks = pykakasi.kakasi()
-
 
     def _chinese_to_romanized(self, chinese_title: str) -> str:
             """
@@ -223,7 +218,7 @@ class AnimeDownloader:
             print(f"4kvm 获取失败: {str(e)}")
         return None
 
-    def _get_bangumi_cover(self, anime_name: str, min_similarity: int = 70, max_similarity: int = 100, delay: float = 1.0) -> Optional[dict]:
+    def _get_bangumi_cover(self, anime_name: str, min_similarity: int = 90, max_similarity: int = 100, delay: float = 1.0) -> Optional[dict]:
         """
         从 Bangumi API 获取动漫封面，支持相似度筛选和图片质量排序。
 
@@ -286,6 +281,7 @@ class AnimeDownloader:
                 logger.debug(f"Bangumi: 标题 '{cleaned_title}', 相似度: {similarity}")
 
                 # 筛选相似度在指定范围内的条目
+                min_similarity = self.similarity_threshold
                 if min_similarity <= similarity <= max_similarity:
                     try:
                         size, file_size = self._get_image_info(img_url)
@@ -417,6 +413,7 @@ class AnimeDownloader:
                     logger.debug(f"Bilibili: 标题 '{cleaned_title}', 相似度: {similarity}")
 
                     # 筛选相似度在指定范围内的条目
+                    min_similarity = self.similarity_threshold
                     if min_similarity <= similarity <= max_similarity:
                         try:
                             size, file_size = self._get_image_info(img_url)
@@ -456,7 +453,7 @@ class AnimeDownloader:
                     )
 
                 # 选择最相似且质量最高的图片
-                best_match = max(candidates, key=lambda x: ( x['similarity'], x['quality_score']))
+                best_match = max(candidates, key=lambda x: (x['similarity'], x['quality_score']))
                 logger.info(
                     f"Bilibili: 选择最相似且质量最高的标题 '{best_match['title']}' "
                     f"(相似度: {best_match['similarity']}, 质量评分: {best_match['quality_score']})"
@@ -472,7 +469,165 @@ class AnimeDownloader:
         except Exception as e:
             logger.error(f"Bilibili 获取失败: {str(e)}")
         return None
+    
+    def _get_anilist_cover(self, anime_name: str, min_similarity: int = 90, max_similarity: int = 100, delay: float = 1.0) -> Optional[Dict]:
+        """
+        从 AniList GraphQL API 获取动漫封面，支持相似度筛选和图片质量排序。
 
+        Args:
+            anime_name (str): 动漫名称（支持中文、英文等）。
+            min_similarity (int): 标题相似度最小阈值（默认90）。
+            max_similarity (int): 标题相似度最大阈值（默认100）。
+            delay (float): 请求前的随机延迟时间（秒，默认1.0）。
+
+        Returns:
+            Optional[Dict]: 包含封面信息的字典（URL、标题、来源等），未找到时返回None.
+
+        Raises:
+            requests.RequestException: 网络或API请求失败。
+        """
+        # 验证输入
+        if not anime_name or not isinstance(anime_name, str):
+            logger.error("无效的动漫名称")
+            return None
+
+        try:
+            # 随机延迟
+            time.sleep(random.uniform(self.delays.get(AnimeSource.ANILIST, delay), 3))
+
+            # 构造 GraphQL 查询
+            query = """
+            query ($search: String) {
+                Page(page: 1, perPage: 10) {
+                    media(search: $search, type: ANIME) {
+                        coverImage { large }
+                        title { romaji english native }
+                        synonyms
+                    }
+                }
+            }
+            """
+            variables = {"search": anime_name}
+            self.headers['User-Agent'] = self._get_random_user_agent()
+            logger.debug(f"AniList: 发送 GraphQL 查询，搜索标题: {anime_name}")
+
+            # 发送请求
+            response = self.session.post(
+                "https://graphql.anilist.co",
+                json={"query": query, "variables": variables},
+                headers=self.headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            logger.debug(f"AniList: 响应状态码: {response.status_code}")
+
+            # 解析响应
+            data = response.json()
+            media_list = data.get('data', {}).get('Page', {}).get('media', [])
+            if not media_list:
+                logger.info("AniList: 未找到匹配的动漫条目")
+                return None
+
+            # 初始化候选列表
+            candidates = []
+
+            # 清理和标准化输入标题
+            cleaned_anime_name = clean_title(anime_name)
+            normalized_anime_name = normalize_title(cleaned_anime_name)
+
+            for media in media_list:
+                img_url = media.get('coverImage', {}).get('large')
+                main_title = (
+                    media.get('title', {}).get('romaji')
+                    or media.get('title', {}).get('english')
+                    or media.get('title', {}).get('native')
+                )
+                if not main_title or not img_url or not img_url.endswith(('.jpg', '.jpeg', '.png')):
+                    continue
+
+                main_title = main_title.strip().replace("'", "_")
+                aliases = media.get('synonyms', [])
+                all_titles = [main_title] + [alias.strip().replace("'", "_") for alias in aliases]
+
+                # 清理和标准化主标题
+                cleaned_title = clean_title(main_title)
+                normalized_title = normalize_title(cleaned_title)
+
+                # 计算主标题的模糊相似度
+                similarity = fuzz.ratio(normalized_anime_name, normalized_title)
+                logger.debug(f"AniList: 标题 '{cleaned_title}', 模糊相似度: {similarity}")
+
+                # 检查完全匹配（主标题或别名）
+                is_exact_match = False
+                for title in all_titles:
+                    cleaned_alias = clean_title(title)
+                    normalized_alias = normalize_title(cleaned_alias)
+                    if normalized_anime_name == normalized_alias:
+                        is_exact_match = True
+                        break
+
+                # 获取图片信息
+                try:
+                    size, file_size = self._get_image_info(img_url)
+                    quality_score = size[0] * size[1] * (file_size / 1024)
+                except Exception as e:
+                    logger.warning(f"获取图片信息失败: {str(e)}")
+                    quality_score = 0
+
+                # 创建候选条目
+                candidate = {
+                    'url': img_url,
+                    'title': cleaned_title,
+                    'source': AnimeSource.ANILIST,
+                    'resolution': size,
+                    'file_size': file_size,
+                    'quality_score': quality_score,
+                    'similarity': 100 if is_exact_match else similarity
+                }
+
+                # 添加到候选列表（完全匹配或模糊匹配满足阈值）
+                min_similarity = self.similarity_threshold
+                if is_exact_match or (min_similarity <= similarity <= max_similarity):
+                    candidates.append(candidate)
+
+            # 如果没有找到任何符合条件的匹配项
+            if not candidates:
+                logger.info("AniList: 未找到符合条件的动漫条目")
+                return None
+
+            # 输出所有待选择的结果
+            logger.info("AniList: 待选择的候选条目：")
+            for i, candidate in enumerate(candidates, 1):
+                logger.info(
+                    f"候选 {i}: 标题='{candidate['title']}', "
+                    f"URL={candidate['url']}, "
+                    f"相似度={candidate['similarity']}, "
+                    f"质量评分={candidate['quality_score']}, "
+                    f"分辨率={candidate['resolution']}, "
+                    f"文件大小={candidate['file_size']} 字节"
+                )
+
+            # 选择质量最高的图片
+            best_match = max(candidates, key=lambda x: x['quality_score'])
+            logger.info(
+                f"AniList: 选择质量最高的标题 '{best_match['title']}' "
+                f"(相似度: {best_match['similarity']}, 质量评分: {best_match['quality_score']})"
+            )
+            return best_match
+
+        except requests.ConnectionError:
+            logger.error("AniList: 网络连接失败")
+            return None
+        except requests.Timeout:
+            logger.error("AniList: 请求超时")
+            return None
+        except requests.HTTPError as e:
+            logger.error(f"AniList: HTTP 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"AniList 获取失败: {str(e)}")
+            return None
+        
     def _get_mal_cover(self, anime_name: str) -> Optional[dict]:
         """从MyAnimeList获取封面"""
         try:
@@ -661,112 +816,8 @@ class AnimeDownloader:
             if driver:
                 driver.quit()
         return None
-    def _get_anilist_cover(self, anime_name: str) -> Optional[Dict]:
-            """
-            从 AniList GraphQL API 获取动漫封面，支持中文标题（通过转换为罗马音）。
 
-            Args:
-                anime_name: 动漫名称（支持中文、英文等）。
 
-            Returns:
-                包含封面信息的字典，或 None（如果失败）。
-            """
-            try:
-                # 如果是中文标题，转换为罗马音
-                print(f"输入标题: {anime_name}")
-                # if any('\u4e00' <= char <= '\u9fff' for char in anime_name):
-                #     anime_name = self._chinese_to_romanized(anime_name)
-                # print(f"最终搜索标题: {anime_name}")
-
-                # 随机延迟
-                time.sleep(random.uniform(self.delays.get(AnimeSource.ANILIST, 1), 3))
-
-                # 构造 GraphQL 查询
-                query = """
-                query ($search: String) {
-                Page(page: 1, perPage: 10) {
-                    media(search: $search, type: ANIME) {
-                    coverImage { large }
-                    title { romaji english native }
-                    synonyms
-                    }
-                }
-                }
-                """
-                variables = {"search": anime_name}
-                self.headers['User-Agent'] = self._get_random_user_agent()
-                response = self.session.post("https://anilist.co/graphql", json={"query": query, "variables": variables}, headers=self.headers)
-                response.raise_for_status()
-
-                # 保存响应（类似 HTML 保存）
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_anime_name = re.sub(r'[^\w\-]', '_', anime_name)
-                json_filename = os.path.join(self.output_dir, f"{safe_anime_name}_{timestamp}_anilist.json")
-                with open(json_filename, 'w', encoding='utf-8') as f:
-                    f.write(response.text)
-
-                # 解析响应
-                data = response.json()
-                media_list = data.get('data', {}).get('Page', {}).get('media', [])
-
-                best_match = None
-                highest_similarity = 0
-
-                for media in media_list:
-                    img_url = media['coverImage']['large']
-                    main_title = media['title']['romaji'] or media['title']['english'] or media['title']['native']
-                    main_title = main_title.strip().replace("'", "_")
-                    aliases = media.get('synonyms', [])
-                    
-                    # 合并主标题和别名
-                    all_titles = [main_title] + [alias.strip().replace("'", "_") for alias in aliases]
-
-                    # 完全匹配
-                    for title in all_titles:
-                        if re.search(re.escape(anime_name), title, re.IGNORECASE):
-                            size, file_size = self._get_image_info(img_url)
-                            result = {
-                                'url': img_url,
-                                'title': main_title,
-                                'source': AnimeSource.ANILIST.value,
-                                'resolution': size,
-                                'file_size': file_size,
-                                'quality_score': size[0] * size[1] * file_size
-                            }
-                            return result
-
-                    # 模糊匹配
-                    for title in all_titles:
-                        normalized_anime_name = re.sub(r'第\d季|Season \d', '', anime_name).strip()
-                        normalized_title = re.sub(r'第\d期|Season \d', '', title).strip()
-                        similarity = fuzz.ratio(normalized_anime_name.lower(), normalized_title.lower())
-                        
-                        if similarity > highest_similarity:
-                            highest_similarity = similarity
-                            size, file_size = self._get_image_info(img_url)
-                            best_match = {
-                                'url': img_url,
-                                'title': main_title,
-                                'source': AnimeSource.ANILIST.value,
-                                'resolution': size,
-                                'file_size': file_size,
-                                'quality_score': size[0] * size[1] * file_size
-                            }
-
-                # 返回最相似匹配
-                if best_match and highest_similarity >= self.similarity_threshold:
-                    return best_match
-                return None
-
-            except requests.ConnectionError:
-                return None
-            except requests.Timeout:
-                return None
-            except requests.HTTPError:
-                return None
-            except Exception as e:
-                print(f"搜索失败: {str(e)}")
-                return None
 # 工具函数
     def _get_random_user_agent(self) -> str:
         """返回随机用户代理，模拟不同浏览器，应对用户代理检测"""
