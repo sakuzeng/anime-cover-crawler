@@ -5,10 +5,10 @@ pytest
 Pillow 
 tqdm
 fuzzywuzzy
-python-Levenshtein
-webdriver-manager
-selenium
 python-dotenv
-googletrans
-pykakasi
-deep-translator
+python-Levenshtein
+# webdriver-manager
+# selenium
+# googletrans
+# pykakasi
+# deep-translator

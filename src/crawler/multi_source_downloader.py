@@ -1,38 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import requests
-from typing import Optional, Dict, List
-import os
-from datetime import datetime
-import json
-import time
-from enum import Enum
-from bs4 import BeautifulSoup
-from PIL import Image
-import io
-from tqdm import tqdm
-# 添加4kvm依赖库
-from urllib.parse import quote
-import re
-import random
-# 相似度
-from fuzzywuzzy import fuzz
+import os                # 文件和目录操作
+from datetime import datetime  # 日期和时间处理
+import json             # JSON 数据处理
+import time             # 时间相关操作
+import io               # 输入/输出流操作
+from urllib.parse import quote  # URL 编码
+import re               # 正则表达式
+import random           # 随机数生成
+from typing import Optional, Dict, List  # 类型注解
+from enum import Enum                    # 枚举类型
+import requests         # HTTP 请求
+from bs4 import BeautifulSoup  # HTML/XML 解析
+from PIL import Image   # 图像处理
+from tqdm import tqdm   # 进度条显示
+from fuzzywuzzy import fuzz  # 字符串模糊匹配
+from dotenv import load_dotenv  # 环境变量加载
 # 添加ayf依赖库
 # from selenium import webdriver
 # from selenium.webdriver.chrome.options import Options
 # from selenium.webdriver.chrome.service import Service
 # from webdriver_manager.chrome import ChromeDriverManager
-# 翻译依赖库
-# from deep_translator import GoogleTranslator
-# from googletrans import Translator
-# import pykakasi
 
-import logging
-# 导入.env
-from dotenv import load_dotenv
-# 导入工具函数
-from utils.helpers import clean_title, normalize_title
 
 # 加载 .env 文件
 load_dotenv()
@@ -57,8 +47,8 @@ class AnimeDownloader:
         self.sources = {
             # AnimeSource.FOURKVM: self._get_4kvm_cover,
             # AnimeSource.BILIBILI: self._get_bili_cover,
-            # AnimeSource.BANGUMI: self._get_bangumi_cover,、
-            # AnimeSource.ANILIST: self._get_anilist_cover,
+            # AnimeSource.BANGUMI: self._get_bangumi_cover,
+            AnimeSource.ANILIST: self._get_anilist_cover,
             # AnimeSource.MAL: self._get_mal_cover,
             # AnimeSource.ANIDB: self._get_anidb_cover,
             # AnimeSource.IYF: self._get_iyf_cover，
@@ -80,8 +70,8 @@ class AnimeDownloader:
         self.output_dir = "temp_html"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        # 相似度阈值，用于提供url
-        self.similarity_threshold = 90
+        # 相似度阈值，用于提供url,提供在番剧名称不确定时进行搜索
+        self.similarity_threshold = 60
 
 
         # 设置 Clash 代理
@@ -99,28 +89,28 @@ class AnimeDownloader:
         # self.translator = GoogleTranslator(source='zh-CN', target='ja',proxies=self.proxies)
         # self.kks = pykakasi.kakasi()
 
-    def _chinese_to_romanized(self, chinese_title: str) -> str:
-            """
-            将中文标题转换为罗马音（同步版本）。
+    # def _chinese_to_romanized(self, chinese_title: str) -> str:
+    #         """
+    #         将中文标题转换为罗马音（同步版本）。
 
-            Args:
-                chinese_title: 中文标题。
+    #         Args:
+    #             chinese_title: 中文标题。
 
-            Returns:
-                罗马音标题，若转换失败则返回原标题。
-            """
-            try:
-                # 中文 -> 日文
-                japanese_title = self.translator.translate(chinese_title)
-                print(f"中文标题 '{chinese_title}' 转换为日文: {japanese_title}")
-                # 日文 -> 罗马音
-                result = self.kks.convert(japanese_title)
-                romanized_title = ' '.join(item['hepburn'] for item in result).capitalize()
-                print(f"日文 '{japanese_title}' 转换为罗马音: {romanized_title}")
-                return romanized_title
-            except Exception as e:
-                print(f"标题转换失败: {str(e)}，使用原标题: {chinese_title}")
-                return chinese_title
+    #         Returns:
+    #             罗马音标题，若转换失败则返回原标题。
+    #         """
+    #         try:
+    #             # 中文 -> 日文
+    #             japanese_title = self.translator.translate(chinese_title)
+    #             print(f"中文标题 '{chinese_title}' 转换为日文: {japanese_title}")
+    #             # 日文 -> 罗马音
+    #             result = self.kks.convert(japanese_title)
+    #             romanized_title = ' '.join(item['hepburn'] for item in result).capitalize()
+    #             print(f"日文 '{japanese_title}' 转换为罗马音: {romanized_title}")
+    #             return romanized_title
+    #         except Exception as e:
+    #             print(f"标题转换失败: {str(e)}，使用原标题: {chinese_title}")
+    #             return chinese_title
 
     def _get_4kvm_cover(self, anime_name: str) -> Optional[Dict]:
 
@@ -817,8 +807,7 @@ class AnimeDownloader:
                 driver.quit()
         return None
 
-
-# 工具函数
+#工具函数
     def _get_random_user_agent(self) -> str:
         """返回随机用户代理，模拟不同浏览器，应对用户代理检测"""
         user_agents = [
@@ -839,8 +828,7 @@ class AnimeDownloader:
             return size, file_size
         except Exception as e:
             print(f"获取图片信息失败: {str(e)}")
-            return (0, 0), 0
-
+            return (0, 0), 0 
     def download_image(self, url: str, anime_name: str, source: str) -> Optional[str]:
         """下载图片并显示进度"""
         try:
@@ -868,7 +856,7 @@ class AnimeDownloader:
         except Exception as e:
             print(f"下载失败: {str(e)}")
             return None
-
+        
     def get_covers(self, anime_name: str, sources: List[AnimeSource] = None) -> List[Dict]:
         """从多个来源获取封面"""
         if sources is None:
@@ -889,6 +877,8 @@ class AnimeDownloader:
                 if len(results) > 0:
                     time.sleep(1)
         return results
+
+
 
 def main():
     downloader = AnimeDownloader()
