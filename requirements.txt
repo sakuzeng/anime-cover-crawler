@@ -8,4 +8,7 @@ fuzzywuzzy
 python-Levenshtein
 webdriver-manager
 selenium
-# python-dotenv
+python-dotenv
+googletrans
+pykakasi
+deep-translator
