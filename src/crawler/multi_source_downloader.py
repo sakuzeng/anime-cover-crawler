@@ -46,12 +46,12 @@ class AnimeDownloader:
         }
         self.sources = {
             # AnimeSource.BILIBILI: self._get_bili_cover,
-            # AnimeSource.ANILIST: self._get_anilist_cover,
+            AnimeSource.ANILIST: self._get_anilist_cover,
             # AnimeSource.BANGUMI: self._get_bangumi_cover,
             # AnimeSource.MAL: self._get_mal_cover,
             # AnimeSource.ANIDB: self._get_anidb_cover,
-            # AnimeSource.FOURKVM: self._get_4kvm_cover,
-            AnimeSource.IYF: self._get_iyf_cover
+            # AnimeSource.FOURKVM: self._get_4kvm_cover
+            # AnimeSource.IYF: self._get_iyf_cover
         }
         # 定义延迟
         self.delays = {
@@ -60,8 +60,8 @@ class AnimeDownloader:
             AnimeSource.BANGUMI: 1,
             AnimeSource.MAL: 3,
             AnimeSource.ANIDB: 2,
-            AnimeSource.FOURKVM: 2,
-            AnimeSource.IYF: 2
+            AnimeSource.FOURKVM: 2
+            # AnimeSource.IYF: 2
         }
         # 添加session复用
         self.session = requests.Session()  
@@ -126,7 +126,6 @@ class AnimeDownloader:
         except Exception as e:
             print(f"Bilibili获取失败: {str(e)}")
         return None
-
     def _get_anilist_cover(self, anime_name: str) -> Optional[dict]:
         """从 AniList 搜索页面获取封面"""
         try:
@@ -156,6 +155,95 @@ class AnimeDownloader:
         except Exception as e:
             print(f"AniList 获取失败: {str(e)}")
         return None
+
+    # def _get_anilist_cover(self, anime_name: str) -> Optional[Dict]:
+    #         """
+    #         从 AniList 搜索页面获取动漫封面，支持完全匹配和最相似匹配。
+
+    #         Args:
+    #             anime_name: 动漫名称。
+
+    #         Returns:
+    #             包含封面信息的字典，或 None（如果失败）。
+    #         """
+    #         try:
+    #             # 随机延迟
+    #             time.sleep(random.uniform(self.delays.get(AnimeSource.ANILIST, 1), 3))
+    #             self.headers['User-Agent'] = self._get_random_user_agent()
+
+    #             # 获取 Cookies（仅在必要时）
+    #             if not self.session.cookies:
+    #                 homepage_response = self._fetch_with_retry('https://anilist.co/')
+                
+    #             # 构造搜索 URL
+    #             encoded_name = quote(anime_name)
+    #             search_url = f"https://anilist.co/search/anime?search={encoded_name}"
+    #             response = self._fetch_with_retry(search_url)
+
+    #             # 保存 HTML
+    #             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    #             safe_anime_name = re.sub(r'[^\w\-]', '_', anime_name)
+    #             html_filename = os.path.join(self.output_dir, f"{safe_anime_name}_{timestamp}_anilist.html")
+    #             with open(html_filename, 'w', encoding='utf-8') as f:
+    #                 f.write(response.text)
+
+    #             # 解析 HTML
+    #             soup = BeautifulSoup(response.text, 'html.parser')
+    #             title = soup.select_one('title').text if soup.select_one('title') else '无标题'
+    #             anime_items = soup.select('.media-card')  # 根据 AniList 实际结构调整选择器
+
+    #             best_match = None
+    #             highest_similarity = 0
+
+    #             for item in anime_items:
+    #                 img = item.select_one('img')
+    #                 title_elem = item.select_one('.title')
+    #                 if not (img and title_elem):
+    #                     continue
+
+    #                 img_url = img.get('src')
+    #                 title = title_elem.text.strip().replace("'", "_")
+    #                 similarity = fuzz.ratio(anime_name.lower(), title.lower())
+
+    #                 # 完全匹配
+    #                 if re.search(re.escape(anime_name), title, re.IGNORECASE):
+    #                     size, file_size = self._get_image_info(img_url)
+    #                     result = {
+    #                         'url': img_url,
+    #                         'title': title,
+    #                         'source': AnimeSource.ANILIST.value,
+    #                         'resolution': size,
+    #                         'file_size': file_size,
+    #                         'quality_score': size[0] * size[1] * file_size
+    #                     }
+    #                     return result
+
+    #                 # 记录最相似匹配
+    #                 if similarity > highest_similarity:
+    #                     highest_similarity = similarity
+    #                     size, file_size = self._get_image_info(img_url)
+    #                     best_match = {
+    #                         'url': img_url,
+    #                         'title': title,
+    #                         'source': AnimeSource.ANILIST.value,
+    #                         'resolution': size,
+    #                         'file_size': file_size,
+    #                         'quality_score': size[0] * size[1] * file_size
+    #                     }
+
+    #             # 返回最相似匹配
+    #             if best_match and highest_similarity >= self.similarity_threshold:
+    #                 return best_match
+    #             return None
+
+    #         except requests.ConnectionError:
+    #             return None
+    #         except requests.Timeout:
+    #             return None
+    #         except requests.HTTPError:
+    #             return None
+    #         except Exception:
+    #             return None
 
     def _get_bangumi_cover(self, anime_name: str) -> Optional[dict]:
         """从 Bangumi 获取封面"""
